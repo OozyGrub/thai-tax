@@ -1,0 +1,18 @@
+{
+  "name": "thai-tax",
+  "version": "1.0.0",
+  "description": "Thai personal income tax utility functions.",
+  "main": "index.js",
+  "repository": "git@github.com:OozyGrub/thai-tax.git",
+  "author": "Krit Kruaykitanon <krit.kruaykitanon@gmail.com>",
+  "license": "MIT",
+  "private": false,
+  "dependencies": {
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.14.186",
+    "@types/node": "^18.8.2",
+    "typescript": "^4.8.4"
+  }
+}
