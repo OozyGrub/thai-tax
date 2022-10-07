@@ -1,4 +1,4 @@
-import { TaxMetaDataMap } from "../types/types";
+import { TaxMetaDataMap } from "../types";
 import policy2565 from "./2565/policy";
 import taxTable2565 from "./2565/taxTable";
 

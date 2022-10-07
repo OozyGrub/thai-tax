@@ -11,8 +11,8 @@ const thaiTax = new ThaiTax(2565)
   .setGeneralInfo({
     sso: 0,
     houseInterest: 0,
-    etc: 0,
-    wht: 0,
+    socialEnterprise: 0,
+    shopDeeMeeKuen: 0,
   })
   .setFamily({
     status: FamilyStatus.SINGLE,
@@ -23,21 +23,22 @@ const thaiTax = new ThaiTax(2565)
     noOfNonRelatedHandicaps: 0,
   })
   .setInsurance({
-    life: 100_000,
+    life: 0,
     health: 0,
     parent: 0,
-    retire: 0,
+    spouse: 0,
+    annuity: 0,
   })
   .setFund({
     pvd: 0,
     ssf: 200_000,
-    rmf: 100_000,
+    rmf: 300_000,
     gpf: 0,
     nsf: 0,
     pvt: 0,
   })
   .setDonation({
-    special: 0,
+    special: 1000,
     other: 0,
   });
 

@@ -1,21 +1,22 @@
-import { min, round, sum } from "lodash";
+import { clamp, max, min, round, sum } from "lodash";
+import { defaultOptions } from "./defaultOptions";
 import { FamilyStatus } from "./enums";
 import taxMetaDataMap from "./meta";
+import { TaxOutput, TaxYear } from "./types";
+import { Policy } from "./types/policy";
 import {
   Donation,
+  Family,
   Fund,
   GeneralInfo,
   Income,
-  Policy,
-  TaxOutput,
-  TaxTable,
-  ThaiTaxYear,
-} from "./types/types";
-import { Family, Insurance } from "./types/types.d";
+  Insurance,
+} from "./types/props";
+import { TaxTable } from "./types/taxTable";
+import { resolve } from "./utils/resolve";
 import { sumValues } from "./utils/sumValues";
 
 export class ThaiTax {
-  private year: ThaiTaxYear;
   private policy: Policy;
   private taxTable: TaxTable;
 
@@ -27,177 +28,269 @@ export class ThaiTax {
   private fund: Fund;
   private donation: Donation;
 
-  constructor(year: ThaiTaxYear) {
-    this.year = year;
-    this.policy = taxMetaDataMap[year].policy;
-    this.taxTable = taxMetaDataMap[year].taxTable;
-
-    this.income = { salary: 0, bonus: 0, other: 0, crypto: 0 };
-    this.generalInfo = { sso: 0, houseInterest: 0, etc: 0, wht: 0 };
-    this.family = {
-      status: FamilyStatus.SINGLE,
-      noOfChildren: 0,
-      noOfParents: 0,
-      noOfSpouses: 0,
-      noOfRelatedHandicaps: 0,
-      noOfNonRelatedHandicaps: 0,
-    };
-    this.insurance = {
-      life: 0,
-      health: 0,
-      parent: 0,
-      retire: 0,
-    };
-    this.fund = {
-      pvd: 0,
-      ssf: 0,
-      rmf: 0,
-      gpf: 0,
-      nsf: 0,
-      pvt: 0,
-    };
-    this.donation = {
-      special: 0,
-      other: 0,
-    };
-  }
-
-  public setIncome(o: Income): ThaiTax {
-    this.income = o;
+  constructor(year?: TaxYear) {
+    this.policy = year ? taxMetaDataMap[year].policy : defaultOptions.policy;
+    this.taxTable = year
+      ? taxMetaDataMap[year].taxTable
+      : defaultOptions.taxTable;
+    this.income = defaultOptions.income;
+    this.generalInfo = defaultOptions.generalInfo;
+    this.family = defaultOptions.family;
+    this.insurance = defaultOptions.insurance;
+    this.fund = defaultOptions.fund;
+    this.donation = defaultOptions.donation;
     return this;
   }
 
-  public setGeneralInfo(o: GeneralInfo): ThaiTax {
-    this.generalInfo = o;
+  public setIncome(o: Partial<Income>): ThaiTax {
+    this.income = { ...defaultOptions.income, ...o };
     return this;
   }
 
-  public setFamily(o: Family): ThaiTax {
-    this.family = o;
+  public setGeneralInfo(o: Partial<GeneralInfo>): ThaiTax {
+    this.generalInfo = { ...defaultOptions.generalInfo, ...o };
     return this;
   }
 
-  public setInsurance(o: Insurance): ThaiTax {
-    this.insurance = o;
+  public setFamily(o: Partial<Family>): ThaiTax {
+    this.family = { ...defaultOptions.family, ...o };
     return this;
   }
 
-  public setFund(o: Fund): ThaiTax {
-    this.fund = o;
+  public setInsurance(o: Partial<Insurance>): ThaiTax {
+    this.insurance = { ...defaultOptions.insurance, ...o };
     return this;
   }
 
-  public setDonation(o: Donation): ThaiTax {
-    this.donation = o;
+  public setFund(o: Partial<Fund>): ThaiTax {
+    this.fund = { ...defaultOptions.fund, ...o };
     return this;
   }
 
-  public calFamilyDeduct(): number {
-    const selfDeduct = this.policy.deduct.self;
-    const parentDeduct = this.family.noOfParents * this.policy.deduct.parent;
-    const spouseDeduct =
+  public setDonation(o: Partial<Donation>): ThaiTax {
+    this.donation = { ...defaultOptions.donation, ...o };
+    return this;
+  }
+
+  /**
+   *
+   * @returns เงินได้ที่ต้องเสียภาษี
+   */
+  public sumIncome(): number {
+    return sumValues(this.income);
+  }
+
+  public getTax(): number {
+    const netIncome = this.getNetIncome() - this.sumDonationDeduct();
+    return this.calculateTax(netIncome);
+  }
+
+  public sumFamilyDeduct(): number {
+    const selfDeduct = resolve({
+      criteria: this.policy.family.self,
+    });
+
+    const parentDeduct = resolve({
+      criteria: this.policy.family.parent,
+      amount: this.family.noOfParents,
+    });
+
+    // TODO: 30,000 - 60,000 depend on age
+    const childrenDeduct = resolve({
+      criteria: this.policy.family.children,
+      amount: this.family.noOfChildren,
+    });
+
+    const netSpouses =
       this.family.status === FamilyStatus.MARRIED
-        ? this.family.noOfSpouses * this.policy.deduct.spouse
+        ? // monogamy
+          min([1, this.family.noOfSpouses])
         : 0;
-    const handicapDeduct =
-      this.family.noOfRelatedHandicaps * this.policy.deduct.handicap +
-        this.family.noOfNonRelatedHandicaps >
-      0
-        ? this.policy.deduct.handicap
-        : 0;
+    const spouseDeduct = resolve({
+      criteria: this.policy.family.spouse,
+      amount: netSpouses,
+    });
 
-    return sum([selfDeduct, parentDeduct, spouseDeduct, handicapDeduct]);
+    const netHandicaps = this.family.noOfRelatedHandicaps;
+    0 + clamp(this.family.noOfNonRelatedHandicaps, 0, 1);
+    const handicapDeduct = resolve({
+      criteria: this.policy.family.handicap,
+      amount: netHandicaps,
+    });
+
+    return sum([
+      selfDeduct,
+      parentDeduct,
+      childrenDeduct,
+      spouseDeduct,
+      handicapDeduct,
+    ]);
   }
 
-  public calGeneralDeduct(): number {
-    const ssoDeduct = min([
-      this.generalInfo.sso,
-      this.policy.limit.general.sso,
-    ])!;
-    const houseInterestDeduct = min([
-      this.generalInfo.houseInterest,
-      this.policy.limit.general.houseInterest,
-    ])!;
-    return sum([ssoDeduct, houseInterestDeduct]);
+  public sumGeneralDeduct(): number {
+    const ssoDeduct = resolve({
+      criteria: this.policy.general.sso,
+      amount: this.generalInfo.sso,
+    });
+
+    const houseInterestDeduct = resolve({
+      criteria: this.policy.general.houseInterest,
+      amount: this.generalInfo.houseInterest,
+    });
+
+    const socialEnterpriseDeduct = resolve({
+      criteria: this.policy.general.socialEnterprise,
+      amount: this.generalInfo.socialEnterprise,
+    });
+
+    const shopDeeMeeKuenDeduct = resolve({
+      criteria: this.policy.general.shopDeeMeeKuen,
+      amount: this.generalInfo.shopDeeMeeKuen,
+    });
+
+    return sum([
+      ssoDeduct,
+      houseInterestDeduct,
+      socialEnterpriseDeduct,
+      shopDeeMeeKuenDeduct,
+    ]);
   }
 
-  public calInsuranceAndFundDeduct(): number {
-    const lifeInsuranceDeduct = min([
-      this.insurance.life,
-      this.policy.limit.insurance.life,
-    ])!;
+  public sumInsuranceAndFundDeduct(): number {
+    const lifeInsuranceDeduct = resolve({
+      amount: this.insurance.life,
+      criteria: this.policy.insurance.self.life,
+    });
 
     const calInsuranceDeduct = (): number => {
-      const healthInsuranceDeduct = min([
-        this.insurance.health,
-        this.policy.limit.insurance.health,
-      ])!;
-      const selfInsuranceDeduct = min([
-        lifeInsuranceDeduct + healthInsuranceDeduct,
-        this.policy.limit.insurance.life,
-      ])!;
-      const parentDeduct = min([
-        this.insurance.parent,
-        this.policy.limit.insurance.parent,
-      ])!;
-      return sum([selfInsuranceDeduct, parentDeduct]);
+      const healthInsuranceDeduct = resolve({
+        criteria: this.policy.insurance.self.health,
+        amount: this.insurance.health,
+      });
+
+      const selfInsuranceDeduct = resolve({
+        criteria: this.policy.insurance.self,
+        amount: lifeInsuranceDeduct + healthInsuranceDeduct,
+      });
+
+      const parentInsuranceDeduct = resolve({
+        criteria: this.policy.insurance.parent,
+        amount: this.insurance.parent,
+      });
+
+      const spouseInsuranceDeduct = resolve({
+        criteria: this.policy.insurance.spouse,
+        amount: this.insurance.spouse,
+      });
+
+      return sum([
+        selfInsuranceDeduct,
+        parentInsuranceDeduct,
+        spouseInsuranceDeduct,
+      ]);
     };
 
     const calFundDeduct = (): number => {
-      const retireDeduct = min([
-        this.insurance.retire,
-        this.policy.limit.insurance.retire - lifeInsuranceDeduct,
-      ])!;
-      return min([
-        sumValues(this.fund) + retireDeduct,
-        // this.policy.limit.fund.percent * sumValues(this.income),
-        this.policy.limit.fund.value,
-      ])!;
+      const governmentDeduct = resolve({
+        criteria: this.policy.fund.government,
+        amount: this.fund.gpf + this.fund.pvd + this.fund.pvt,
+        percentRef: this.income.salary,
+      });
+
+      const rmfDeduct = resolve({
+        criteria: this.policy.fund.rmf,
+        amount: this.fund.rmf,
+        percentRef: this.sumIncome(),
+      });
+
+      const annuityDeduct = resolve({
+        criteria: this.policy.fund.annuity,
+        amount: this.insurance.annuity,
+      });
+
+      const nsfDeduct = resolve({
+        criteria: this.policy.fund.nsf,
+        amount: this.fund.nsf,
+      });
+
+      const ssfDeduct = resolve({
+        criteria: this.policy.fund.ssf,
+        amount: this.fund.ssf,
+        percentRef: this.sumIncome(),
+      });
+
+      const fundDeduct = sum([
+        governmentDeduct,
+        rmfDeduct,
+        annuityDeduct,
+        nsfDeduct,
+        ssfDeduct,
+      ]);
+
+      return resolve({
+        criteria: this.policy.fund,
+        amount: fundDeduct,
+      });
     };
 
     return calInsuranceDeduct() + calFundDeduct();
   }
 
-  public calDonationDeduct(): number {
-    const deduct =
-      this.policy.coefficient.donation.special * this.donation.special +
-      this.policy.coefficient.donation.other * this.donation.other;
-    return min([
-      deduct,
-      this.policy.limit.donation.percent * sumValues(this.income),
-    ])!;
+  public sumDonationDeduct(): number {
+    const specialDeduct = resolve({
+      criteria: this.policy.donation.special,
+      amount: this.donation.special,
+      percentRef: this.getNetIncome(),
+    });
+
+    const otherDeduct = resolve({
+      criteria: this.policy.donation.other,
+      amount: this.donation.other,
+      percentRef: this.getNetIncome(),
+    });
+
+    return sum([specialDeduct, otherDeduct]);
   }
 
-  public calTax(amount: number): number {
-    return this.taxTable.reduce((total, range) => {
-      if (range.from > amount) return total;
-      return total + range.percent * (min([amount, range.to])! - range.from);
-    }, 0);
-  }
+  /**
+   *
+   * @returns เงินได้หลังหักค่าลดหย่อน
+   */
+  public getNetIncome(): number {
+    const totalIncome = this.sumIncome();
 
-  public summarize(): TaxOutput {
-    const totalIncome = sumValues(this.income);
-
-    const familyDeduct = this.calFamilyDeduct();
-    const generalDeduct = this.calGeneralDeduct();
-    const insuranceAndFundDeduct = this.calInsuranceAndFundDeduct();
-    const donationDeduct = this.calDonationDeduct();
+    const familyDeduct = this.sumFamilyDeduct();
+    const generalDeduct = this.sumGeneralDeduct();
+    const insuranceAndFundDeduct = this.sumInsuranceAndFundDeduct();
 
     const totalDeduct = sum([
       familyDeduct,
       generalDeduct,
       insuranceAndFundDeduct,
-      donationDeduct,
     ]);
 
-    console.log(totalIncome);
-    const tax = this.calTax(totalIncome - totalDeduct);
+    const expense = resolve({ criteria: this.policy.family.expense });
+
+    return max([0, totalIncome - totalDeduct - expense])!;
+  }
+
+  public calculateTax(amount: number): number {
+    return this.taxTable.reduce((total, range) => {
+      if (range.from > amount) return total;
+
+      return (
+        total + (range.percent / 100) * (min([amount, range.to])! - range.from)
+      );
+    }, 0);
+  }
+
+  public summarize(): TaxOutput {
+    const netIncome = this.getNetIncome() - this.sumDonationDeduct();
+    const tax = this.getTax();
 
     return {
-      totalDeduct: round(totalDeduct, 2),
-      totalIncome: round(sumValues(this.income), 2),
+      netIncome: round(netIncome, 2),
       tax: round(tax, 2),
-      toPay: round(tax - this.generalInfo.wht, 2),
     };
   }
 }
